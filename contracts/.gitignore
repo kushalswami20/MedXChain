@@ -1,5 +1,8 @@
 node_modules
 .env
+contracts/abi.json
+gas-report.txt
+assets
 
 # Hardhat files
 /cache

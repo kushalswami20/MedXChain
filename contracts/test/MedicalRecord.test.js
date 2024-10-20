@@ -1,77 +1,126 @@
-const { expect } = require("chai");
+const { expect, assert  } = require("chai");
 const { ethers } = require("hardhat");
 
-// describe("MY contract", function () {
-//   let user1, medical, transactionResponse, transactionReceipt;
-//   beforeEach(async () => {
-//     const provider = ethers.getDefaultProvider();
-//     const accounts = provider.getSigner();
-//     user1 = accounts[1];
-//     const Medical = await ethers.getContractFactory("MedicalRecord");
-//     medical = await Medical.connect(user1).deploy();
-//   });
+describe("MedicalRecord Contract", function () {
+    let MedicalRecord;
+    let medicalRecord;
+    let owner, patient, requester1, requester2;
 
-//   describe("Deployment", () => {
-//     it("The contract is deployed successfully", async () => {
-//       expect(await medical.address).to.not.equal(0);
-//     });
-//   });
+    beforeEach(async function () {
+        MedicalRecord = await ethers.getContractFactory("MedicalRecord");
+        [owner, patient, requester1, requester2] = await ethers.getSigners();
+        medicalRecord = await MedicalRecord.deploy();
+        await medicalRecord.waitForDeployment();
+    });
 
-//   describe("Add Record", () => {
-//     beforeEach(async () => {
-//       transactionResponse = await medical.addPatient(
-//         "0xBb08e4cA817f6c752b8d01504e01BC3996c969a6",
-//         "Wastron",
-//         22,
-//         "Male",
-//         "B positive",
-//         "Qme14bJRpvP5NExom67QmJvGQpgavvvyzvc6hxaR3CjHSg"
-//       );
-//       transactionReceipt = await transactionResponse.wait();
-//     });
-
-//     it("Emits a Add Record event", async () => {
-//       const event = transactionReceipt.events?.find(event => event.event === "MedicalRecords__AddRecord");
-//       expect(event).to.exist;
-      
-//       const args = event.args;
-//       expect(args.owner).to.equal("0xBb08e4cA817f6c752b8d01504e01BC3996c969a6");
-//       expect(args.name).to.equal("Wastron");
-//       expect(args.age).to.equal(22);
-//       expect(args.gender).to.equal("Male");
-//       expect(args.bloodType).to.equal("B positive");
-//       expect(args.dataHash).to.equal("Qme14bJRpvP5NExom67QmJvGQpgavvvyzvc6hxaR3CjHSg");
-      
-//       // Uncomment these lines if these fields are relevant and available
-//       // expect(args.recordId).to.equal("1");
-//       // expect(args.timestamp).to.not.equal(0);
-//     });
-//   });
-// });
-
-describe("Medical Record", function (){
-  it("deployment should be successsful", async function (){
-    const accounts = await ethers.getSigners();
-    const hardhatMedical= await ethers.deployContract("MedicalRecord");
-    expect(await hardhatMedical.address).to.not.equal(0);
-  })
-})
-
-describe("Add record", function (){
-  it("should add a record", async function (){
-    const accounts = await ethers.getSigners();
-    const hardhatMedical= await ethers.deployContract("MedicalRecord");
-    const transactionResponse = await hardhatMedical.addPatient(
-              "0xBb08e4cA817f6c752b8d01504e01BC3996c969a6",
-              "Wastron",
-              22,
-              "Male",
-              "B positive",
-              "Qme14bJRpvP5NExom67QmJvGQpgavvvyzvc6hxaR3CjHSg"
+    describe("Patient Management", function () {
+        it("Should add a patient correctly", async function () {
+            await medicalRecord.addPatient(
+                patient.address,
+                "John Doe",
+                30,
+                "Male",
+                "O+",
+                "hash123"
             );
-    const transactionReceipt = await transactionResponse.wait();
-    const event = await transactionReceipt.events.find(event => event.event === "MedicalRecords__AddRecord");
-    expect(await event).to.exist;
+
+            const patientData = await medicalRecord.patients(1);
+            expect(patientData.name).to.equal("John Doe");
+            expect(patientData.age).to.equal(30);
+        });
+
+        it("Should only allow the patient to perform actions", async function () {
+            await medicalRecord.addPatient(
+                patient.address,
+                "John Doe",
+                30,
+                "Male",
+                "O+",
+                "hash123"
+            );
+
+            await expect(medicalRecord.connect(requester1).approveAccess(1, requester1.address, 30))
+                .to.be.revertedWith("Only the patient can perform this action");
+        });
+    });
+
+    describe("Requester Management", function () {
+        it("Should add a requester correctly", async function () {
+            await medicalRecord.connect(requester1).addRequester("Dr. Smith", "Doctor");
+
+            const requesterData = await medicalRecord.getRequesterData(requester1.address);
+            expect(requesterData[1]).to.equal("Dr. Smith");
+            expect(requesterData[2]).to.equal("Doctor");
+        });
+
+        it("Should require requester to be registered for access requests", async function () {
+            await medicalRecord.addPatient(
+                patient.address,
+                "John Doe",
+                30,
+                "Male",
+                "O+",
+                "hash123"
+            );
+
+            await expect(medicalRecord.connect(requester1).requestAccess(1, "Need access for treatment"))
+                .to.be.revertedWith("Requester profile not found");
+        });
+    });
+
+    describe("Access Requests", function () {
+        beforeEach(async function () {
+            // Add a patient and requester for testing access
+            await medicalRecord.addPatient(
+                patient.address,
+                "John Doe",
+                30,
+                "Male",
+                "O+",
+                "hash123"
+            );
+
+            await medicalRecord.connect(requester1).addRequester("Dr. Smith", "Doctor");
+            await medicalRecord.connect(requester1).requestAccess(1, "Need access for treatment");
+        });
+
+        it("Should allow a patient to approve access", async function () {
+          // Patient adds themselves
+          await medicalRecord.addPatient(patient.address, "Patient Name", 30, "Male", "O+", "dataHash");
+          
+          // Requester adds themselves
+          await medicalRecord.connect(requester1).addRequester("Requester Name", "Doctor");
+          
+          // Request access
+          await medicalRecord.connect(requester1).requestAccess(1, "Need access for treatment");
   
-  })
-})
+          // Approve access
+          await medicalRecord.connect(patient).approveAccess(1, requester1.address, 7); // Approve for 7 days
+  
+          // Check if the access request was approved
+          const hasAccess = await medicalRecord.hasAccess(1, requester1.address);
+          assert.equal(hasAccess, true, "Access should be granted after approval");
+  
+          // Check the status of the access request
+          const request = await medicalRecord.accessRequests(1, requester1.address);
+          assert.equal(request.status, 1, "Request should be approved (status should be 1)");
+      });
+
+        it("Should allow a patient to deny access", async function () {
+            await medicalRecord.connect(patient).denyAccess(1, requester1.address);
+            const request = await medicalRecord.accessRequests(1, requester1.address);
+            expect(request.status).to.equal(2); // Denied status
+        });
+
+        it("Should allow requesters to access patient data if approved", async function () {
+            await medicalRecord.connect(patient).approveAccess(1, requester1.address, 30);
+            const data = await medicalRecord.connect(requester1).getPatientData(1);
+            expect(data[3]).to.equal("John Doe"); // Checking patient name
+        });
+
+        it("Should not allow access if not approved", async function () {
+            await expect(medicalRecord.connect(requester2).getPatientData(1))
+                .to.be.revertedWith("Access not granted");
+        });
+    });
+});

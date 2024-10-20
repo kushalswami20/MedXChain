@@ -109,7 +109,7 @@ const PatientList = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
+    <div className="min-h-screen bg-gray-50 items-center justify-center p-4">
       <Card className="min-h-[calc(100vh-2rem)] flex flex-col">
         <CardHeader className="border-b bg-white sticky top-0 z-10">
           <div className="flex items-center justify-between">

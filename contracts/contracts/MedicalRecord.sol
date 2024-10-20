@@ -16,6 +16,13 @@ contract MedicalRecord {
         string dataHash;
         
     }
+    
+    struct Requester {
+        address requesterAddress;
+        string name;
+        string role; // e.g., Doctor, Researcher, etc.
+        uint256 registrationTime;
+    }
 
     struct AccessRequest {
         address requester;
@@ -37,11 +44,16 @@ contract MedicalRecord {
         uint256 age,
         string  gender,
         string bloodType,
-        string dataHash);
+        string dataHash
+    );
+    event RequesterAdded(address indexed requesterAddress, string name, string role);
 
     mapping(uint256 => Patient) public patients; 
-    mapping(address => Patient) public patientsbyaddress;
+    mapping(address => Patient) public patientsByAddress;
     address[] private patientAddresses;
+    mapping(address => Requester) public requesters;
+    address[] public requesterAddresses;
+
     mapping(uint256 => mapping(address => AccessRequest)) public accessRequests;
     mapping(uint256 => mapping(address => bool)) public approvedAccess;
 
@@ -63,7 +75,6 @@ contract MedicalRecord {
         
         recordId++;
         
-        // Create the patient record
         Patient memory newPatient = Patient(
             recordId,
             owner,
@@ -75,11 +86,9 @@ contract MedicalRecord {
             dataHash
         );
         
-        // Store in both mappings
         patients[recordId] = newPatient;
-        patientsbyaddress[owner] = newPatient;
+        patientsByAddress[owner] = newPatient;
         
-        // Store the owner's address
         patientAddresses.push(owner);
         
         emit MedicalRecords__AddRecord(
@@ -90,42 +99,78 @@ contract MedicalRecord {
             age,
             gender,
             bloodType,
-            dataHash);
+            dataHash
+        );
+    }
+
+    function addRequester(string memory name, string memory role) public {
+        require(bytes(name).length > 0, "Name cannot be empty");
+        require(bytes(role).length > 0, "Role cannot be empty");
+    
+        Requester memory newRequester = Requester(
+            msg.sender,
+            name,
+            role,
+            block.timestamp
+        );
+    
+        requesters[msg.sender] = newRequester;
+        requesterAddresses.push(msg.sender);
+    
+        emit RequesterAdded(msg.sender, name, role);
     }
 
     function approveAccess(uint256 patientId, address requester, uint256 durationInDays) public onlyPatient(patientId) {
         AccessRequest storage request = accessRequests[patientId][requester];
         require(request.status == AccessStatus.Pending, "Request already processed");
+        require(requesters[requester].requesterAddress != address(0), "Requester does not exist");
+
         request.status = AccessStatus.Approved;
         request.expirationTime = block.timestamp + (durationInDays * 1 days);
+        
         approvedAccess[patientId][requester] = true;
+
         emit AccessApproved(patientId, requester, request.expirationTime);
     }
 
     function denyAccess(uint256 patientId, address requester) public onlyPatient(patientId) {
         AccessRequest storage request = accessRequests[patientId][requester];
         require(request.status == AccessStatus.Pending, "Request already processed");
+        require(requesters[requester].requesterAddress != address(0), "Requester does not exist");
+
         request.status = AccessStatus.Denied;
         approvedAccess[patientId][requester] = false;
+
         emit AccessDenied(patientId, requester);
     }
 
     function requestAccess(uint256 patientId, string memory _reason) public {
         require(patients[patientId].owner != address(0), "Patient does not exist");
-        accessRequests[patientId][msg.sender] = AccessRequest(msg.sender, patientId, AccessStatus.Pending, _reason, block.timestamp, 0);
+        require(requesters[msg.sender].requesterAddress != address(0), "Requester profile not found");
+    
+        accessRequests[patientId][msg.sender] = AccessRequest(
+            msg.sender, 
+            patientId, 
+            AccessStatus.Pending, 
+            _reason, 
+            block.timestamp, 
+            0
+        );
+    
         emit AccessRequested(patientId, msg.sender, _reason);
     }
 
-    function hasAccess(uint256 patientId, address entity) public view returns(bool) {
-        if (approvedAccess[patientId][entity]) {
-            AccessRequest memory request = accessRequests[patientId][entity];
+    function hasAccess(uint256 patientId, address requester) public view returns (bool) {
+        if (approvedAccess[patientId][requester]) {
+            AccessRequest memory request = accessRequests[patientId][requester];
             if (request.expirationTime > block.timestamp) {
                 return true;
             }
         }
-        return true;
+        return false;
     }
 
+    // Updated function allowing patients to view their own data
     function getPatientData(uint256 patientId) public view returns(
         uint256,
         address,
@@ -136,27 +181,58 @@ contract MedicalRecord {
         string memory,
         string memory
     ) {
-        require(hasAccess(patientId, msg.sender), "Access not granted");
-        Patient storage patientData = patients[patientId];
+        // Allow patients to view their own data without checking access
+        if (patients[patientId].owner == msg.sender) {
+            Patient storage patientData = patients[patientId];
+            return (
+                patientData.recordId,
+                patientData.owner,
+                patientData.timestamp,
+                patientData.name,
+                patientData.age,
+                patientData.gender,
+                patientData.bloodType,
+                patientData.dataHash
+            );
+        } else {
+            // Other users need approved access
+            require(hasAccess(patientId, msg.sender), "Access not granted");
+            Patient storage patientData = patients[patientId];
+            return (
+                patientData.recordId,
+                patientData.owner,
+                patientData.timestamp,
+                patientData.name,
+                patientData.age,
+                patientData.gender,
+                patientData.bloodType,
+                patientData.dataHash
+            );
+        }
+    }
+
+    function getRequesterData(address requester) public view returns (
+        address,
+        string memory,
+        string memory
+    ) {
+        require(requesters[requester].requesterAddress != address(0), "Requester does not exist");
+        
+        Requester memory requesterData = requesters[requester];
+        
         return (
-            patientData.recordId,
-            patientData.owner,
-            patientData.timestamp,
-            patientData.name,
-            patientData.age,
-            patientData.gender,
-            patientData.bloodType,
-            patientData.dataHash
+            requesterData.requesterAddress,
+            requesterData.name,
+            requesterData.role
         );
     }
 
-     // Update getAllPatients to use correct addresses
     function getAllPatients() public view returns (Patient[] memory) {
         Patient[] memory allPatients = new Patient[](patientAddresses.length);
         
         for(uint i = 0; i < patientAddresses.length; i++) {
             address patientAddress = patientAddresses[i];
-            allPatients[i] = patientsbyaddress[patientAddress];
+            allPatients[i] = patientsByAddress[patientAddress];
         }
         
         return allPatients;
@@ -172,8 +248,7 @@ contract MedicalRecord {
         string memory,
         string memory
     ) {
-        Patient memory patient = patientsbyaddress[patientAddress];
-        
+        Patient memory patient = patientsByAddress[patientAddress];
         
         return (
             patient.recordId,
@@ -191,7 +266,6 @@ contract MedicalRecord {
         return patientAddresses.length;
     }
 
-    // Additional getter functions can be implemented as needed
     function getRecordId() public view returns (uint) {
         return recordId;
     }
@@ -215,6 +289,19 @@ contract MedicalRecord {
     function getBloodType(uint _recordId) public view returns (string memory) {
         return patients[_recordId].bloodType;
     }
-    
+
+    function getRequesterAddress(address requester) public view returns (address) {
+        require(requesters[requester].requesterAddress != address(0), "Requester does not exist");
+        return requesters[requester].requesterAddress;
+    }
+
+    function getRequesterName(address requester) public view returns (string memory) {
+        require(requesters[requester].requesterAddress != address(0), "Requester does not exist");
+        return requesters[requester].name;
+    }
+
+    function getRequesterRole(address requester) public view returns (string memory) {
+        require(requesters[requester].requesterAddress != address(0), "Requester does not exist");
+        return requesters[requester].role;
+    }
 }
-   
